@@ -1,0 +1,32 @@
+{
+  "mappings": {
+    "car": {
+      "properties": {
+        "url": {
+          "type": "keyword"
+        },
+        "brand": {
+          "type": "keyword"
+        },
+        "make": {
+          "type": "keyword"
+        },
+        "mileage": {
+          "type": "integer"
+        },
+        "year": {
+          "type": "integer"
+        },
+        "price": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "text"
+        },
+        "unique_ad_hash": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
+}
