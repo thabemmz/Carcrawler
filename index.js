@@ -1,10 +1,10 @@
 // crawler
-const puppeteer = require('puppeteer');
-const elasticsearch = require('elasticsearch');
-const cheerio = require('cheerio');
-const fs = require('fs');
-const urlParser = require('url-parse');
-const hash = require('string-hash');
+const puppeteer = require("puppeteer");
+const elasticsearch = require("elasticsearch");
+const cheerio = require("cheerio");
+const fs = require("fs");
+const urlParser = require("url-parse");
+const hash = require("string-hash");
 
 let toVisit = [];
 const visitedLinks = [];
@@ -12,47 +12,51 @@ const visitedLinks = [];
 let timer;
 
 const client = new elasticsearch.Client({
-  host: 'localhost:9200',
-  log: [{
-    type: 'stdio',
-    levels: ['error']
-  }]
+  host: "localhost:9200",
+  log: [
+    {
+      type: "stdio",
+      levels: ["error"]
+    }
+  ]
 });
 
 const storeDocument = async (id, body) => {
   await client.index({
-    index: 'cars',
-    type: 'car',
+    index: "cars",
+    type: "car",
     id: id,
     body: {
       ...body,
-      unique_ad_hash: `${hash(`${body.mileage}-${body.year}-${body.price}`)}`,
+      unique_ad_hash: `${hash(`${body.mileage}-${body.year}-${body.price}`)}`
     }
   });
 };
 
-const timeout = (ms) => {
+const timeout = ms => {
   return new Promise(resolve => setTimeout(resolve, ms));
 };
 
-const sanitizeString = (string) => string.replace(/(\r\n\t|\n|\r\t)/gm, ' ');
+const sanitizeString = string => string.replace(/(\r\n\t|\n|\r\t)/gm, " ");
 
 const processHTMLMP = async (html, meta) => {
   const $ = cheerio.load(html);
-  console.log('Number of pages:', $('.pagination-pages a').length);
-  const make = $('.mp-Chip[data-parent-id="91"]').text().trim();
-  let model = '';
+  console.log("Number of pages:", $(".pagination-pages a").length);
+  const make = $('.mp-Chip[data-parent-id="91"]')
+    .text()
+    .trim();
+  let model = "";
 
-  $('.mp-Chip').each((i, filterHTML) => {
+  $(".mp-Chip").each((i, filterHTML) => {
     const filterText = $(filterHTML).text();
-    if (filterText.indexOf('Model:') !== -1) {
-      model = filterText.replace('Model:', '').trim();
+    if (filterText.indexOf("Model:") !== -1) {
+      model = filterText.replace("Model:", "").trim();
     }
   });
 
-  $('.search-result').each(async (i, resultHTML) => {
+  $(".search-result").each(async (i, resultHTML) => {
     const $result = $(resultHTML);
-    let url = ($result.attr('data-url') || '').trim();
+    let url = ($result.attr("data-url") || "").trim();
 
     if (!url) {
       // Marktplaats ad! Skip it!
@@ -65,8 +69,18 @@ const processHTMLMP = async (html, meta) => {
     const priceRegex = /^€\s(\d*.?\d*)/g;
     const nonDigit = /[^\d]/g;
 
-    const priceMatch = priceRegex.exec($result.find('.price-new').text().trim());
-    const price = parseInt((priceMatch !== null && priceMatch.length >= 2) ? priceMatch[1].replace(nonDigit, '') : 0, 10);
+    const priceMatch = priceRegex.exec(
+      $result
+        .find(".price-new")
+        .text()
+        .trim()
+    );
+    const price = parseInt(
+      priceMatch !== null && priceMatch.length >= 2
+        ? priceMatch[1].replace(nonDigit, "")
+        : 0,
+      10
+    );
 
     if (price <= 0) {
       // No price or even smaller then zero!? Nonsense for our app. Gone be it!
@@ -74,32 +88,45 @@ const processHTMLMP = async (html, meta) => {
     }
 
     const allPostInfo = {
-      title: sanitizeString($result.find('.mp-listing-title').text()),
+      title: sanitizeString($result.find(".mp-listing-title").text()),
       price,
-      year: parseInt($result.find('.mp-listing-attributes.first').text(), 10),
-      mileage: parseInt($result.find('.mp-listing-attributes').eq(1).text().replace(nonDigit, ''), 10),
+      year: parseInt($result.find(".mp-listing-attributes.first").text(), 10),
+      mileage: parseInt(
+        $result
+          .find(".mp-listing-attributes")
+          .eq(1)
+          .text()
+          .replace(nonDigit, ""),
+        10
+      ),
       make: sanitizeString(make),
       model: sanitizeString(model),
       url: url,
       ...meta
     };
 
+    if (isNaN(allPostInfo.mileage) || allPostInfo.mileage === 0) {
+      // No mileage? plz no!
+      return;
+    }
+
     await storeDocument(url, allPostInfo);
   });
 
-  const links = $('.pagination-pages a').each((i, linkHTML) => {
+  const links = $(".pagination-pages a").each((i, linkHTML) => {
     const link = linkHTML.attribs.href.trim();
 
     const inVisited = visitedLinks.indexOf(link) > -1;
-    const inToVisit = toVisit.filter(linkObj => linkObj.url === link).length !== 0;
+    const inToVisit =
+      toVisit.filter(linkObj => linkObj.url === link).length !== 0;
 
     if (!inVisited && !inToVisit) {
       toVisit.push({
         url: link,
-        parser: 'marktplaats',
+        parser: "marktplaats",
         meta: {
-          origin: 'marktplaats',
-        },
+          origin: "marktplaats"
+        }
       });
     }
   });
@@ -107,27 +134,51 @@ const processHTMLMP = async (html, meta) => {
 
 const processHTMLGP = async (html, meta) => {
   const $ = cheerio.load(html);
-  console.log('Number of pages:', $('.pagination a').not('.pagination__link--current').length);
-  const makeMatch = /^(.*)\s\(.*$/g.exec($('#merk .text').text().trim());
-  const make = (makeMatch !== null) ? makeMatch[1] : '';
+  console.log(
+    "Number of pages:",
+    $(".pagination a").not(".pagination__link--current").length
+  );
+  const makeMatch = /^(.*)\s\(.*$/g.exec(
+    $("#merk .text")
+      .text()
+      .trim()
+  );
+  const make = makeMatch !== null ? makeMatch[1] : "";
 
-  const modelMatch = /^(.*)\s\(.*$/g.exec($('#model .text').text().trim());
-  const model = (modelMatch !== null) ? modelMatch[1] : '';
+  const modelMatch = /^(.*)\s\(.*$/g.exec(
+    $("#model .text")
+      .text()
+      .trim()
+  );
+  const model = modelMatch !== null ? modelMatch[1] : "";
 
-  $('li.occasion').each(async (i, resultHTML) => {
+  $("li.occasion").each(async (i, resultHTML) => {
     const $result = $(resultHTML);
-    let url = $result.find('a').attr('href');
+    let url = $result.find("a").attr("href");
 
     const parsedUrl = urlParser(url, true);
     url = `${parsedUrl.origin}${parsedUrl.pathname}`;
 
     const priceRegex = /^€\s(\d*.?\d*)/g;
     const nonDigit = /[^\d]/g;
-    const yearMileageRegex = /^Bouwjaar:\s(\d*),\sKm.stand:\s(\d*.?\d*)*\skm$/g;
+    const yearMileageRegex = /^Bouwjaar:\s(\d*),\sKm.stand:[\\n]*\s*(\d*.?\d*)\skm$/g;
 
-    const priceMatch = priceRegex.exec($result.find('.occ_price').text().trim());
-    const price = parseInt((priceMatch !== null) ? priceMatch[1].replace(nonDigit, '') : 0, 10);
-    const yearMileageMatch = yearMileageRegex.exec($result.find('.occ_bouwjaar_kmstand').text().trim());
+    const priceMatch = priceRegex.exec(
+      $result
+        .find(".occ_price")
+        .text()
+        .trim()
+    );
+    const price = parseInt(
+      priceMatch !== null ? priceMatch[1].replace(nonDigit, "") : 0,
+      10
+    );
+    const yearMileageMatch = yearMileageRegex.exec(
+      $result
+        .find(".occ_bouwjaar_kmstand")
+        .text()
+        .trim()
+    );
 
     if (price <= 0) {
       // No price or even smaller then zero!? Nonsense for our app. Gone be it!
@@ -135,47 +186,75 @@ const processHTMLGP = async (html, meta) => {
     }
 
     const allPostInfo = {
-      title: sasanitizeString($result.find('.occ_cartitle').text().trim()),
+      title: sanitizeString(
+        $result
+          .find(".occ_cartitle")
+          .text()
+          .trim()
+      ),
       price,
-      year: parseInt((yearMileageMatch !== null) ? yearMileageMatch[1].replace(nonDigit, '') : 0, 10),
-      mileage: parseInt((yearMileageMatch !== null) ? yearMileageMatch[2].replace(nonDigit, '') : 0, 10),
+      year: parseInt(
+        yearMileageMatch !== null
+          ? yearMileageMatch[1].replace(nonDigit, "")
+          : 0,
+        10
+      ),
+      mileage: parseInt(
+        yearMileageMatch !== null
+          ? yearMileageMatch[2].replace(nonDigit, "")
+          : 0,
+        10
+      ),
       make: sanitizeString(make),
       model: sanitizeString(model),
       url: url,
       ...meta
     };
 
+    if (allPostInfo.mileage === 0) {
+      // No mileage gives unexpected results. Gone be it.
+      return;
+    }
     await storeDocument(url, allPostInfo);
   });
 
-  const links = $('.pagination a').not('.pagination__link--current').each((i, linkHTML) => {
-    const link = linkHTML.attribs.href.trim();
+  const links = $(".pagination a")
+    .not(".pagination__link--current")
+    .each((i, linkHTML) => {
+      const link = linkHTML.attribs.href.trim();
 
-    const inVisited = visitedLinks.indexOf(link) > -1;
-    const inToVisit = toVisit.filter(linkObj => linkObj.url === link).length !== 0;
+      const inVisited = visitedLinks.indexOf(link) > -1;
+      const inToVisit =
+        toVisit.filter(linkObj => linkObj.url === link).length !== 0;
 
-    if (!inVisited && !inToVisit) {
-      toVisit.push({
-        url: link,
-        parser: 'gaspedaal',
-        meta: {
-          origin: 'gaspedaal',
-        },
-      });
-    }
-  });
+      if (!inVisited && !inToVisit) {
+        toVisit.push({
+          url: link,
+          parser: "gaspedaal",
+          meta: {
+            origin: "gaspedaal"
+          }
+        });
+      }
+    });
 };
 
 const processHTMLAS = async (html, meta) => {
   const $ = cheerio.load(html);
-  console.log('Number of pages:', $('.cl-pagination .sc-pagination a').not('.active').length);
+  console.log(
+    "Number of pages:",
+    $(".cl-pagination .sc-pagination a").not(".active").length
+  );
   const stripParensRegExp = /^(.*)\s\(.*$/g;
   const make = $('div[data-test="make0"] input').val();
   const model = $('div[data-test="modelmodelline0"] input').val();
 
-  $('.cldt-summary-full-item').each(async (i, resultHTML) => {
+  $(".cldt-summary-full-item").each(async (i, resultHTML) => {
     const $result = $(resultHTML);
-    let url = `https://www.autoscout24.nl/${$result.find('a[data-item-name="detail-page-link"]').attr('href').trim()}`;
+    let url = `https://www.autoscout24.nl/${$result
+      .find('a[data-item-name="detail-page-link"]')
+      .attr("href")
+      .trim()}`;
 
     const parsedUrl = urlParser(url, true);
     url = `${parsedUrl.origin}${parsedUrl.pathname}`;
@@ -184,9 +263,23 @@ const processHTMLAS = async (html, meta) => {
     const nonDigit = /[^\d]/g;
     const yearRegex = /^\d*\/(\d*)/g;
 
-    const priceMatch = priceRegex.exec($result.find('.cldt-price').text().trim());
-    const price = parseInt((priceMatch !== null) ? priceMatch[1].replace(nonDigit, '') : 0, 10);
-    const yearMatch = yearRegex.exec($result.find('.cldt-summary-vehicle-data li').eq(1).text().trim());
+    const priceMatch = priceRegex.exec(
+      $result
+        .find(".cldt-price")
+        .text()
+        .trim()
+    );
+    const price = parseInt(
+      priceMatch !== null ? priceMatch[1].replace(nonDigit, "") : 0,
+      10
+    );
+    const yearMatch = yearRegex.exec(
+      $result
+        .find(".cldt-summary-vehicle-data li")
+        .eq(1)
+        .text()
+        .trim()
+    );
 
     if (price <= 0) {
       // No price or even smaller then zero!? Nonsense for our app. Gone be it!
@@ -194,35 +287,69 @@ const processHTMLAS = async (html, meta) => {
     }
 
     const allPostInfo = {
-      title: sanitizeString($result.find('.cldt-summary-title').text().trim()),
+      title: sanitizeString(
+        $result
+          .find(".cldt-summary-title")
+          .text()
+          .trim()
+      ),
       price,
-      year: parseInt((yearMatch !== null) ? yearMatch[1].replace(nonDigit, '') : 0, 10),
-      mileage: parseInt($result.find('.cldt-summary-vehicle-data li').eq(0).text().replace(nonDigit, ''), 10),
+      year: parseInt(
+        yearMatch !== null ? yearMatch[1].replace(nonDigit, "") : 0,
+        10
+      ),
+      mileage: parseInt(
+        $result
+          .find(".cldt-summary-vehicle-data li")
+          .eq(0)
+          .text()
+          .replace(nonDigit, ""),
+        10
+      ),
       make: sanitizeString(make),
       model: sanitizeString(model),
       url: url,
       ...meta
     };
 
+    if (allPostInfo.mileage === 0 || isNaN(allPostInfo.mileage)) {
+      return;
+    }
+
     await storeDocument(url, allPostInfo);
   });
 
-  const links = $('.cl-pagination .sc-pagination a').not('.active').each((i, linkHTML) => {
-    const link = linkHTML.attribs.href.trim();
+  // retrieve canonical to build correct url
+  const canonical = $('link[rel="canonical"]').attr("href");
 
-    const inVisited = visitedLinks.indexOf(link) > -1;
-    const inToVisit = toVisit.filter(linkObj => linkObj.url === link).length !== 0;
+  const links = $(".cl-pagination .sc-pagination a")
+    .not(".active")
+    .each((i, linkHTML) => {
+      if (!linkHTML.attribs.href) {
+        return;
+      }
 
-    if (!inVisited && !inToVisit) {
-      toVisit.push({
-        url: link,
-        parser: 'autoscout',
-        meta: {
-          origin: 'autoscout',
-        },
-      });
-    }
-  });
+      let link = linkHTML.attribs.href.trim();
+
+      if (!link.startsWith("https://www.autoscout24.nl")) {
+        link = `${canonical}${link}`;
+      }
+
+      const inVisited = visitedLinks.indexOf(link) > -1;
+      const inToVisit =
+        toVisit.filter(linkObj => linkObj.url === link).length !== 0;
+
+      if (link)
+        if (!inVisited && !inToVisit) {
+          toVisit.push({
+            url: link,
+            parser: "autoscout",
+            meta: {
+              origin: "autoscout"
+            }
+          });
+        }
+    });
 };
 
 const requestPageMP = async (url, meta) => {
@@ -230,14 +357,14 @@ const requestPageMP = async (url, meta) => {
   const browser = await puppeteer.launch();
   const page = await browser.newPage();
   await page.setCookie({
-    name: 'CookieOptIn',
-    value: 'true',
-    domain: '.marktplaats.nl',
-    path: '/',
+    name: "CookieOptIn",
+    value: "true",
+    domain: ".marktplaats.nl",
+    path: "/"
   });
 
-  console.log('Visited:', visitedLinks);
-  console.log('Requesting:', url);
+  console.log("Visited:", visitedLinks);
+  console.log("Requesting:", url);
 
   await page.goto(url);
   visitedLinks.push(url);
@@ -251,20 +378,20 @@ const requestPageGP = async (url, meta) => {
   const browser = await puppeteer.launch();
   const page = await browser.newPage();
   await page.setCookie({
-    name: 'CookieConsent',
-    value: '1',
-    domain: '.www.gaspedaal.nl',
-    path: '/',
+    name: "CookieConsent",
+    value: "1",
+    domain: ".www.gaspedaal.nl",
+    path: "/"
   });
   await page.setCookie({
-    name: 'firstVisit',
-    value: '1',
-    domain: '.www.gaspedaal.nl',
-    path: '/',
+    name: "firstVisit",
+    value: "1",
+    domain: ".www.gaspedaal.nl",
+    path: "/"
   });
 
-  console.log('Visited:', visitedLinks);
-  console.log('Requesting:', url);
+  console.log("Visited:", visitedLinks);
+  console.log("Requesting:", url);
 
   await page.goto(url);
   visitedLinks.push(url);
@@ -278,14 +405,14 @@ const requestPageAS = async (url, meta) => {
   const browser = await puppeteer.launch();
   const page = await browser.newPage();
   await page.setCookie({
-    name: 'cookieConsent',
-    value: '1',
-    domain: '.autoscout24.nl',
-    path: '/',
+    name: "cookieConsent",
+    value: "1",
+    domain: ".autoscout24.nl",
+    path: "/"
   });
 
-  console.log('Visited:', visitedLinks);
-  console.log('Requesting:', url);
+  console.log("Visited:", visitedLinks);
+  console.log("Requesting:", url);
 
   await page.goto(url);
   visitedLinks.push(url);
@@ -294,23 +421,19 @@ const requestPageAS = async (url, meta) => {
   await processHTMLAS(html, meta);
 };
 
-const startCrawl = ({
-  url,
-  parser,
-  meta,
-}) => {
-  switch(parser) {
-    case 'marktplaats': {
+const startCrawl = ({ url, parser, meta }) => {
+  switch (parser) {
+    case "marktplaats": {
       return requestPageMP(url, meta);
     }
-    case 'gaspedaal': {
+    case "gaspedaal": {
       return requestPageGP(url, meta);
     }
-    case 'autoscout': {
+    case "autoscout": {
       return requestPageAS(url, meta);
     }
   }
-}
+};
 
 timer = setInterval(async () => {
   if (toVisit.length === 0) {
@@ -318,7 +441,7 @@ timer = setInterval(async () => {
     return;
   }
 
-  console.log('To visit:', toVisit);
+  console.log("To visit:", toVisit);
   const [urlObject, ...rest] = toVisit;
   toVisit = rest;
 
@@ -328,27 +451,30 @@ timer = setInterval(async () => {
 
 // Nissan Pixo: Marktplaats
 toVisit.push({
-  url: 'https://www.marktplaats.nl/z.html?categoryId=135&attributes=model%2CPixo&startDateFrom=ALWAYS&priceFrom=&priceTo=&attributes=priceType%2CVraagprijs&yearFrom=2010&yearTo=2010&mileageFrom=&mileageTo=&attributes=&query=&searchOnTitleAndDescription=true&postcode=3812JA&distance=0&attributes=fuel%2CBenzine&attributes=options%2CClimate_control_Airconditioning',
-  parser: 'marktplaats',
+  url:
+    "https://www.marktplaats.nl/z.html?categoryId=135&attributes=model%2CPixo&startDateFrom=ALWAYS&priceFrom=&priceTo=&attributes=priceType%2CVraagprijs&yearFrom=2010&yearTo=2010&mileageFrom=&mileageTo=&attributes=&query=&searchOnTitleAndDescription=true&postcode=3812JA&distance=0&attributes=fuel%2CBenzine&attributes=options%2CClimate_control_Airconditioning",
+  parser: "marktplaats",
   meta: {
-    origin: 'marktplaats',
-  },
+    origin: "marktplaats"
+  }
 });
 
 // Nissan Pixo: Gaspedaal
 toVisit.push({
-  url: 'https://www.gaspedaal.nl/nissan/pixo/benzine?bmax=2010&bmin=2010&opt=38&srt=df-a',
-  parser: 'gaspedaal',
+  url:
+    "https://www.gaspedaal.nl/nissan/pixo/benzine?bmax=2010&bmin=2010&opt=38&srt=df-a",
+  parser: "gaspedaal",
   meta: {
-    origin: 'gaspedaal',
-  },
+    origin: "gaspedaal"
+  }
 });
 
 // Nissan Pixo: Autoscout24
 toVisit.push({
-  url: 'https://www.autoscout24.nl/lst/nissan/pixo?sort=standard&desc=0&eq=5&offer=J%2CU%2CO%2CD&fuel=B&ustate=N%2CU&cy=NL&atype=C',
-  parser: 'autoscout',
+  url:
+    "https://www.autoscout24.nl/lst/nissan/pixo?sort=standard&desc=0&eq=5&offer=J%2CU%2CO%2CD&fuel=B&ustate=N%2CU&cy=NL&atype=C",
+  parser: "autoscout",
   meta: {
-    origin: 'autoscout',
-  },
+    origin: "autoscout"
+  }
 });
